@@ -231,11 +231,13 @@
   var ctx = canvas.getContext("2d");
   var W = 0, H = 0, dpr = 1;
 
+  /* mm:ss.cc - the timer is accurate to a hundredth of a second. */
   function formatTime(seconds) {
     var m = Math.floor(seconds / 60);
     var s = seconds - 60 * m;
-    return (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s.toFixed(1);
+    return (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s.toFixed(2);
   }
+  var NO_TIME = "--:--.--";
 
   function setFont(px, bold) {
     ctx.font = (bold ? "bold " : "") + Math.max(6, Math.round(px)) + "px " + FONT;
@@ -492,33 +494,80 @@
   }
 
   // ------------------------------------------------------------ records -----
+  /* Two independent leaderboards, exactly as records.py keeps them:
+       time   fastest completion, an equal time decided by fewer flips
+       flips  fewest flips, an equal flip count decided by the faster time */
+  var TIME_EPSILON = 0.005;
+
+  function emptyRecord() { return { time: null, flips: null }; }
+
+  function hasAnyRecord(record) {
+    return !!(record && (record.time || record.flips));
+  }
+
+  function entry(data) {
+    if (!data || typeof data !== "object") { return null; }
+    var t = Number(data.time), f = Math.round(Number(data.flips));
+    if (!isFinite(t) || !isFinite(f) || t <= 0 || f <= 0) { return null; }
+    return { time: t, flips: f };
+  }
+
   function loadRecord() {
     var raw;
     try { raw = window.localStorage.getItem(RECORD_KEY); }
-    catch (e) { return null; }
-    if (!raw) { return null; }
+    catch (e) { return emptyRecord(); }
+    if (!raw) { return emptyRecord(); }
     var data;
-    try { data = JSON.parse(raw); } catch (e) { return null; }
-    if (!data || typeof data !== "object") { return null; }
-    var t = Number(data.best_time), f = Math.round(Number(data.best_flips));
-    if (!isFinite(t) || !isFinite(f) || t <= 0 || f <= 0) { return null; }
-    return { best_time: t, best_flips: f };
+    try { data = JSON.parse(raw); } catch (e) { return emptyRecord(); }
+    if (!data || typeof data !== "object") { return emptyRecord(); }
+    if (typeof data.best_time === "number") {        // the old one-board format
+      var old = entry({ time: data.best_time, flips: data.best_flips });
+      return { time: old, flips: old ? { time: old.time, flips: old.flips }
+                                     : null };
+    }
+    return { time: entry(data.best_time), flips: entry(data.best_flips) };
+  }
+
+  function dumpEntry(e) {
+    return e ? { time: Math.round(e.time * 100) / 100, flips: e.flips } : null;
   }
 
   function saveRecord(record) {
     try {
       window.localStorage.setItem(RECORD_KEY, JSON.stringify({
-        best_time: Math.round(record.best_time * 100) / 100,
-        best_flips: record.best_flips
+        best_time: dumpEntry(record.time),
+        best_flips: dumpEntry(record.flips)
       }));
     } catch (e) { /* private mode: play on without saving */ }
   }
 
-  function isBetter(t, flips, old) {
-    if (!old) { return true; }
-    if (t < old.best_time - 0.05) { return true; }
-    if (Math.abs(t - old.best_time) <= 0.05) { return flips < old.best_flips; }
+  function beatsTime(t, flips, e) {
+    if (!e) { return true; }
+    if (t < e.time - TIME_EPSILON) { return true; }
+    if (Math.abs(t - e.time) <= TIME_EPSILON) { return flips < e.flips; }
     return false;
+  }
+
+  function beatsFlips(t, flips, e) {
+    if (!e) { return true; }
+    if (flips !== e.flips) { return flips < e.flips; }
+    return t < e.time - TIME_EPSILON;
+  }
+
+  function submitRun(t, flips, record) {
+    var next = { time: record && record.time ? record.time : null,
+                 flips: record && record.flips ? record.flips : null };
+    var improved = [];
+    if (beatsTime(t, flips, next.time)) {
+      next.time = { time: t, flips: flips };
+      improved.push("time");
+    }
+    if (beatsFlips(t, flips, next.flips)) {
+      next.flips = { time: t, flips: flips };
+      improved.push("flips");
+    }
+    if (improved.length) { saveRecord(next); }
+    return { record: next, improved: improved };
   }
 
   // --------------------------------------------------------------- card -----
@@ -658,7 +707,7 @@
     shakeTimer: 0, flashTimer: 0,
     elapsed: 0, flips: 0, pairsFound: 0, timerRunning: false,
     angryDone: false, laughDone: false,
-    toasts: [], confirmRestart: false, newRecord: false,
+    toasts: [], confirmRestart: false, improved: [],
     record: null, running: true
   };
 
@@ -760,7 +809,7 @@
     // ---- victory panel
     var vh = 52 * s;
     var vw2 = Math.min(w - 50, 700 * s);
-    G.victory = { x: cx - vw2 / 2, y: h / 2 - 165 * s, w: vw2, h: 330 * s };
+    G.victory = { x: cx - vw2 / 2, y: h / 2 - 172 * s, w: vw2, h: 344 * s };
     var vw = Math.min(200 * s, (G.victory.w - 4 * 14 * s) / 3);
     var gapx = 14 * s;
     var left = cx - (3 * vw + 2 * gapx) / 2;
@@ -827,7 +876,7 @@
     G.angryDone = false;
     G.laughDone = false;
     G.confirmRestart = false;
-    G.newRecord = false;
+    G.improved = [];
     G.toasts = [];
     G.state = PLAYING;
   }
@@ -1022,13 +1071,20 @@
     G.timerRunning = false;
     stopLaugh();
     playSound("victory");
-    if (isBetter(G.elapsed, G.flips, G.record)) {
-      G.record = { best_time: G.elapsed, best_flips: G.flips };
-      saveRecord(G.record);
-      G.newRecord = true;
-    } else {
-      G.newRecord = false;
+    var result = submitRun(G.elapsed, G.flips, G.record);
+    G.record = result.record;
+    G.improved = result.improved;
+  }
+
+  function recordLine() {
+    var parts = [];
+    if (G.record.time) {
+      parts.push("Best time " + formatTime(G.record.time.time));
     }
+    if (G.record.flips) {
+      parts.push("Fewest flips " + G.record.flips.flips);
+    }
+    return parts.join("   |   ");
   }
 
   // ---------------------------------------------------------------- draw ----
@@ -1104,10 +1160,9 @@
       G.buttons[name].draw(G.mouse, s);
     });
 
-    if (G.record) {
-      text("Best: " + formatTime(G.record.best_time) + " with "
-           + G.record.best_flips + " flips", 22 * s, C.GREEN_DARK, "midleft",
-           26 * s, tl.bottomY, true);
+    if (hasAnyRecord(G.record)) {
+      text(recordLine(), 20 * s, C.GREEN_DARK, "midleft", 26 * s, tl.bottomY,
+           true);
     }
     text(CREDIT, 19 * s, C.PINK_DARK, "midright", W - 26 * s, tl.bottomY, true);
     text("Click a card   -   M mute   -   R restart   -   ESC back", 18 * s,
@@ -1129,8 +1184,8 @@
 
     fillRR(ctx, G.stats.x, G.stats.y, G.stats.w, G.stats.h, 16, C.PANEL);
     strokeRR(ctx, G.stats.x, G.stats.y, G.stats.w, G.stats.h, 16, C.PANEL_EDGE, 2);
-    var best = G.record ? formatTime(G.record.best_time) : "--:--.-";
-    var bestFlips = G.record ? String(G.record.best_flips) : "--";
+    var best = G.record.time ? formatTime(G.record.time.time) : NO_TIME;
+    var bestFlips = G.record.flips ? String(G.record.flips.flips) : "--";
     var stats = [
       ["TIME", formatTime(G.elapsed), C.BLUE_DARK],
       ["FLIPS", String(G.flips), C.PINK_DARK],
@@ -1246,19 +1301,33 @@
     strokeRR(ctx, p.x, p.y, p.w, p.h, 28, C.GREEN_DARK, 5);
     var bounce = reduceMotion ? 0 : 6 * Math.sin(G.now * 4);
     textFitted("YOU BEAT THE MAYHEM!", 44 * s, C.GREEN_DARK,
-               { x: p.x, y: p.y + 56 * s + bounce - 5, w: p.w, h: 10 }, true);
+               { x: p.x, y: p.y + 52 * s + bounce - 5, w: p.w, h: 10 }, true);
     text("Time " + formatTime(G.elapsed) + "   -   " + G.flips + " flips",
-         30 * s, C.INK, "center", cx, p.y + 112 * s, true);
-    if (G.newRecord) {
-      text("NEW BEST RECORD!", 30 * s, C.PINK_DARK, "center", cx,
-           p.y + 154 * s, true);
-    } else if (G.record) {
-      text("Best: " + formatTime(G.record.best_time) + " with "
-           + G.record.best_flips + " flips", 23 * s, C.INK_SOFT, "center", cx,
-           p.y + 154 * s, false);
+         30 * s, C.INK, "center", cx, p.y + 100 * s, true);
+
+    var y = p.y + 134 * s;
+    if (G.improved.length) {
+      var banner = G.improved.length === 2
+        ? "NEW BEST TIME  +  NEW FEWEST FLIPS!"
+        : (G.improved[0] === "time" ? "NEW BEST TIME!" : "NEW FEWEST FLIPS!");
+      textFitted(banner, 28 * s, C.PINK_DARK,
+                 { x: p.x, y: y - 5, w: p.w, h: 10 }, true);
+      y += 34 * s;
     }
-    text("7 / 7 pairs  +  both Nailongs found", 22 * s, C.BLUE_DARK, "center",
-         cx, p.y + 192 * s, false);
+    [["Best time", "time", C.BLUE_DARK],
+     ["Fewest flips", "flips", C.PINK_DARK]].forEach(function (it) {
+      var e = G.record[it[1]];
+      var line = it[0] + "  -";
+      if (e) {
+        line = it[1] === "time"
+          ? it[0] + "  " + formatTime(e.time) + "  in " + e.flips + " flips"
+          : it[0] + "  " + e.flips + " flips  in " + formatTime(e.time);
+      }
+      text(line, 21 * s, it[2], "center", cx, y, false);
+      y += 26 * s;
+    });
+    text("7 / 7 pairs  +  both Nailongs found", 20 * s, C.INK_SOFT, "center",
+         cx, y + 2 * s, false);
     ["again", "to_title", "quit_win"].forEach(function (name) {
       G.buttons[name].draw(G.mouse, s);
     });
@@ -1476,7 +1545,7 @@
       angryFound: G.angryDone, laughFound: G.laughDone,
       travelT: Math.round(G.travelT * 100) / 100,
       shake: Math.round(G.shakeTimer * 100) / 100,
-      confirm: G.confirmRestart, newRecord: G.newRecord, record: G.record,
+      confirm: G.confirmRestart, improved: G.improved, record: G.record,
       muted: audio.muted, audioOk: audio.ok,
       soundsDecoded: Object.keys(audio.buffers).sort(),
       laughing: !!audio.laughSource,

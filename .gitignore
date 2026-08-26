@@ -7,7 +7,8 @@ records.json
 nailong_error.log
 
 # build output that can be regenerated
-dist/
+dist/*
+!dist/Nailong.exe
 build_tmp/
 *.spec
 web/artifact.html

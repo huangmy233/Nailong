@@ -45,9 +45,13 @@ MSG_HIDING = "All pairs matched—but a Nailong is still hiding!"
 CREDIT = "Produced by Mingyi"
 
 
+NO_TIME = "--:--.--"
+
+
 def format_time(seconds):
+    """mm:ss.cc - the timer is accurate to a hundredth of a second."""
     minutes = int(seconds) // 60
-    return "%02d:%04.1f" % (minutes, seconds - 60 * minutes)
+    return "%02d:%05.2f" % (minutes, seconds - 60 * minutes)
 
 
 class Button:
@@ -104,7 +108,7 @@ class Game:
         self.record = records.load()
         self.toasts = []
         self.confirm_restart = False
-        self.new_record = False
+        self.improved = []
         self.mouse = (0, 0)
 
         self.reset_game()       # deal a board so nothing is ever undefined
@@ -229,7 +233,7 @@ class Game:
         # ---- victory panel and its buttons
         vh = int(52 * s)
         self.victory_rect = pygame.Rect(0, 0, min(w - 50, int(700 * s)),
-                                        int(330 * s))
+                                        int(344 * s))
         self.victory_rect.center = (cx, h // 2)
         vw = int(min(200 * s, (self.victory_rect.width - 4 * 14 * s) / 3))
         gapx = int(14 * s)
@@ -295,7 +299,7 @@ class Game:
         self.angry_done = False
         self.laugh_done = False
         self.confirm_restart = False
-        self.new_record = False
+        self.improved = []
         self.toasts = []
         self.state = PLAYING
 
@@ -615,7 +619,7 @@ class Game:
         self.timer_running = False
         self.assets.stop_laugh()
         self.assets.play("victory")
-        self.record, self.new_record = records.submit(
+        self.record, self.improved = records.submit(
             self.elapsed, self.flips, self.record)
 
     # --------------------------------------------------------------- draw ---
@@ -684,18 +688,25 @@ class Game:
         for name in ("start", "sound_title", "quit_title"):
             self.buttons[name].draw(self.screen, self.mouse, self.scale)
 
-        if self.record:
-            T.text(self.screen,
-                   "Best: %s with %d flips"
-                   % (format_time(self.record["best_time"]),
-                      self.record["best_flips"]),
-                   int(22 * s), T.GREEN_DARK,
+        if records.has_any(self.record):
+            T.text(self.screen, self.record_line(), int(20 * s), T.GREEN_DARK,
                    midleft=(int(26 * s), tl["bottom_y"]), bold=True)
         T.text(self.screen, CREDIT, int(19 * s), T.PINK_DARK,
                midright=(self.w - int(26 * s), tl["bottom_y"]), bold=True)
         T.text(self.screen, "Left click a card   -   M mute   -   R restart"
                             "   -   ESC quit", int(18 * s), T.INK_SOFT,
                center=(cx, self.h - int(22 * s)))
+
+    def record_line(self):
+        """One compact line naming both leaderboards."""
+        time_board = self.record.get("time")
+        flip_board = self.record.get("flips")
+        parts = []
+        if time_board:
+            parts.append("Best time %s" % format_time(time_board["time"]))
+        if flip_board:
+            parts.append("Fewest flips %d" % flip_board["flips"])
+        return "   |   ".join(parts)
 
     # ---- hud ---------------------------------------------------------------
     def _draw_hud(self):
@@ -711,12 +722,10 @@ class Game:
         # --- stats strip
         T.rounded(self.screen, self.stats_rect, T.PANEL, radius=16)
         T.rounded(self.screen, self.stats_rect, T.PANEL_EDGE, radius=16, width=2)
-        if self.record:
-            best = format_time(self.record["best_time"])
-            best_flips = str(self.record["best_flips"])
-        else:
-            best = "--:--.-"
-            best_flips = "--"
+        time_board = self.record.get("time")
+        flip_board = self.record.get("flips")
+        best = format_time(time_board["time"]) if time_board else NO_TIME
+        best_flips = str(flip_board["flips"]) if flip_board else "--"
         stats = [
             ("TIME", format_time(self.elapsed), T.BLUE_DARK),
             ("FLIPS", str(self.flips), T.PINK_DARK),
@@ -832,24 +841,45 @@ class Game:
         cx = panel.centerx
         bounce = int(6 * math.sin(self.now * 4))
         line = pygame.Rect(panel.left, 0, panel.width, 10)
-        line.centery = panel.top + int(56 * s) + bounce
+        line.centery = panel.top + int(52 * s) + bounce
         T.text_fitted(self.screen, "YOU BEAT THE MAYHEM!", int(44 * s),
                       T.GREEN_DARK, line, bold=True)
         T.text(self.screen, "Time %s   -   %d flips"
                % (format_time(self.elapsed), self.flips), int(30 * s), T.INK,
-               center=(cx, panel.top + int(112 * s)), bold=True)
-        if self.new_record:
-            T.text(self.screen, "NEW BEST RECORD!", int(30 * s), T.PINK_DARK,
-                   center=(cx, panel.top + int(154 * s)), bold=True)
-        elif self.record:
-            T.text(self.screen, "Best: %s with %d flips"
-                   % (format_time(self.record["best_time"]),
-                      self.record["best_flips"]),
-                   int(23 * s), T.INK_SOFT,
-                   center=(cx, panel.top + int(154 * s)))
+               center=(cx, panel.top + int(100 * s)), bold=True)
+
+        y = panel.top + int(134 * s)
+        if self.improved:
+            if len(self.improved) == 2:
+                banner = "NEW BEST TIME  +  NEW FEWEST FLIPS!"
+            elif self.improved[0] == "time":
+                banner = "NEW BEST TIME!"
+            else:
+                banner = "NEW FEWEST FLIPS!"
+            T.text_fitted(self.screen, banner, int(28 * s), T.PINK_DARK,
+                          pygame.Rect(panel.left, y - 5, panel.width, 10),
+                          bold=True)
+            y += int(34 * s)
+
+        # the two leaderboards, each with the run that set it
+        for label, board, colour in (("Best time", "time", T.BLUE_DARK),
+                                     ("Fewest flips", "flips", T.PINK_DARK)):
+            entry = self.record.get(board)
+            if entry:
+                line = "%s  %s  in %s" % (
+                    label,
+                    format_time(entry["time"]) if board == "time"
+                    else "%d flips" % entry["flips"],
+                    "%d flips" % entry["flips"] if board == "time"
+                    else format_time(entry["time"]))
+            else:
+                line = "%s  -" % label
+            T.text(self.screen, line, int(21 * s), colour,
+                   center=(cx, y), bold=False)
+            y += int(26 * s)
+
         T.text(self.screen, "7 / 7 pairs  +  both Nailongs found",
-               int(22 * s), T.BLUE_DARK,
-               center=(cx, panel.top + int(192 * s)))
+               int(20 * s), T.INK_SOFT, center=(cx, y + int(2 * s)))
 
         for name in ("again", "to_title", "quit_win"):
             self.buttons[name].draw(self.screen, self.mouse, self.scale)
