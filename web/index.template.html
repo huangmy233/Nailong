@@ -1,0 +1,148 @@
+<!--HEAD-->
+<title>Nailong Memory Mayhem</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="A cute-but-cruel 4x4 memory game: seven pairs, two Nailongs, one very bad temper.">
+<!--/HEAD-->
+<style>
+  /* The game canvas carries the visual identity (theme.py's pastel set), so the
+     page around it stays a quiet cream ground that blends into it. */
+  :root {
+    color-scheme: light;
+    --cream-top: #fffae4;
+    --cream-bottom: #ffe9d2;
+    --ink: #4a3b34;
+    --ink-soft: #8b786e;
+    --pink: #e66894;
+    --frame: rgba(120, 96, 84, 0.18);
+    --play-font: "Comic Sans MS", "Chalkboard SE", "Comic Neue",
+                 "Trebuchet MS", Verdana, Arial, sans-serif;
+  }
+
+  html, body {
+    height: 100%;
+    margin: 0;
+  }
+
+  body {
+    background: linear-gradient(175deg, var(--cream-top) 0%,
+                                        var(--cream-bottom) 100%);
+    color: var(--ink);
+    font-family: var(--play-font);
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+
+  #stage {
+    min-height: 100vh;
+    min-height: 100dvh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 4px;
+    box-sizing: border-box;
+  }
+
+  #game {
+    display: block;
+    border-radius: 22px;
+    box-shadow: 0 18px 44px -18px var(--frame),
+                0 2px 0 0 rgba(255, 255, 255, 0.7) inset;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    cursor: pointer;
+  }
+
+  /* ---- loading veil ---- */
+  #boot {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 18px;
+    background: linear-gradient(175deg, var(--cream-top), var(--cream-bottom));
+    font-size: clamp(18px, 2.4vw, 26px);
+    color: var(--pink);
+    transition: opacity 420ms ease;
+  }
+
+  #boot.gone {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .dots {
+    display: flex;
+    gap: 10px;
+  }
+
+  .dots i {
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    background: var(--pink);
+    animation: hop 900ms ease-in-out infinite;
+  }
+
+  .dots i:nth-child(2) { background: #569cda; animation-delay: 140ms; }
+  .dots i:nth-child(3) { background: #42a866; animation-delay: 280ms; }
+  .dots i:nth-child(4) { background: #e2a81e; animation-delay: 420ms; }
+
+  @keyframes hop {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-11px); }
+  }
+
+  .hint {
+    font-size: 15px;
+    color: var(--ink-soft);
+  }
+
+  /* ---- a browser tab cannot close itself, so Quit explains instead ---- */
+  #quitnote {
+    position: fixed;
+    left: 50%;
+    bottom: 26px;
+    transform: translate(-50%, 22px);
+    max-width: min(88vw, 560px);
+    padding: 13px 22px;
+    border-radius: 16px;
+    background: #ffffff;
+    border: 3px solid var(--pink);
+    color: var(--ink);
+    font-size: 17px;
+    text-align: center;
+    box-shadow: 0 12px 28px -14px var(--frame);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 260ms ease, transform 260ms ease;
+  }
+
+  #quitnote.show {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .dots i { animation: none; }
+    #boot, #quitnote { transition: none; }
+  }
+</style>
+
+<div id="stage">
+  <canvas id="game" width="900" height="800" aria-label="Nailong Memory Mayhem game board"></canvas>
+</div>
+
+<div id="quitnote">Web version - your browser tab is the window, so just close
+  the tab when you are done. Back on the title screen for now.</div>
+
+<div id="boot">
+  <div>Waking the Nailongs...</div>
+  <div class="dots"><i></i><i></i><i></i><i></i></div>
+  <div class="hint">Click a card to flip - M mutes - R restarts</div>
+</div>
+
+<script>window.NAILONG_ASSETS = __ASSETS_JSON__;</script>
+<script>__GAME_JS__</script>
